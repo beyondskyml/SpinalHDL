@@ -184,7 +184,8 @@ case class SpinalConfig(mode                           : SpinalMode = null,
                         var withTimescale              : Boolean = true,
                         var printFilelist              : Boolean = true,
                         var emitFullComponentBindings  : Boolean = true,
-                        var svInterface                : Boolean = false
+                        var svInterface                : Boolean = false,
+                        registerStyle: RegisterStyle.Value = RegisterStyle.Always  // Always: standard style, Module: modular style
 ){
   def generate       [T <: Component](gen: => T): SpinalReport[T] = Spinal(this)(gen)
   def generateVhdl   [T <: Component](gen: => T): SpinalReport[T] = Spinal(this.copy(mode = VHDL))(gen)
@@ -455,4 +456,8 @@ object SpinalVerilog {
 object SpinalSystemVerilog {
   def apply[T <: Component](config: SpinalConfig)(gen: => T): SpinalReport[T] = Spinal(config.copy(mode = SystemVerilog))(gen)
   def apply[T <: Component](gen: => T): SpinalReport[T] = SpinalConfig(mode = SystemVerilog).generate(gen)
+}
+
+object RegisterStyle extends Enumeration {
+  val Always, Module = Value  // Always: standard style, Module: modular style
 }

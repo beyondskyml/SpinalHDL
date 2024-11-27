@@ -3065,6 +3065,7 @@ object SpinalVerilogBoot{
     val phases = ArrayBuffer[Phase]()
 
     phases += new PhaseCreateComponent(gen)(pc)
+    phases += new PhaseRegisterModule()
     phases += new PhaseDummy(SpinalProgress("Checks and transforms"))
     phases ++= config.transformationPhases
     phases ++= config.memBlackBoxers
@@ -3138,5 +3139,115 @@ object SpinalVerilogBoot{
     report.blackboxesSourcesPaths ++= blackboxesSourcesPaths
 
     report
+  }
+}
+
+class PhaseRegisterModule extends PhaseNetlist {
+  override def impl(pc: PhaseContext): Unit = {
+    import pc._
+
+    if(config.registerStyle != RegisterStyle.Module) return
+
+    val regsToProcess = mutable.ArrayBuffer[(BaseType, Component)]()
+
+    walkDeclarations {
+      case bt: BaseType if bt.isReg && !bt.hasTag(noRegisterModule) =>
+        regsToProcess += ((bt, bt.component))
+      case _ =>
+    }
+
+    for((bt, comp) <- regsToProcess) {
+      try {
+        if(config.verbose) {
+          SpinalInfo(s"Processing register: ${bt.getName()}")
+          bt.foreachStatements(stmt => SpinalInfo(s"  $stmt"))
+        }
+
+        comp.rework {
+          // Validate register
+          if(bt.dlcIsEmpty || bt.clockDomain == null) {
+            PendingError(s"Invalid register ${bt.getName()}")
+            return
+          }
+
+          // Save original state
+          val origName = bt.getName()
+          val origTags = bt.getTags()
+          val cd = bt.clockDomain
+
+          // Build register features
+          val features = List(
+            if(bt.hasInit) "INIT" else "",
+            if(cd.hasResetSignal) (if(cd.config.resetActiveLevel == HIGH) "ARST" else "ARST_N") else "",
+            if(cd.hasClockEnableSignal) (if(cd.config.clockEnableActiveLevel == HIGH) "CE" else "CE_N") else ""
+          ).filter(_.nonEmpty)
+
+          // Build module and instance names
+          val moduleBaseName = s"REG_${features.mkString("_")}_${bt.getBitsWidth}bit"
+          val instanceName = s"${moduleBaseName}_INST_${origName}"
+
+          // Create input signal
+          val dSignal = cloneOf(bt)
+          dSignal.setName(s"${origName}_d")
+
+          val hardType = HardType(cloneOf(bt))
+          val ctx = Component.push(bt.component)
+
+          // Create register module
+          val regModule = new RegisterModule(
+            dataType              = hardType,
+            initValue             = if(bt.hasInit) Some(bt.getInitValue) else None,
+            hasReset              = cd.hasResetSignal,
+            resetActiveHigh       = cd.config.resetActiveLevel == HIGH,
+            hasClockEnable        = cd.hasClockEnableSignal,
+            clockEnableActiveHigh = cd.config.clockEnableActiveLevel == HIGH,
+            clockDomainConfig     = cd.config
+          )
+
+          // Set module names
+          regModule.setDefinitionName(moduleBaseName)
+          regModule.setName(s"${origName}_reg")
+          regModule.addTags(origTags)
+
+          // Save and remove original statements
+          val statements = ArrayBuffer[AssignmentStatement]()
+          bt.foreachStatements { stmt =>
+            statements += stmt
+            stmt.removeStatement()
+          }
+
+          // Connect signals
+          regModule.io.d := dSignal
+
+          // Convert to combinational logic
+          bt.foreachStatements(_.removeStatement())
+          bt := regModule.io.q.asInstanceOf[bt.type]
+          bt.setAsComb()
+          bt.getTags().collect { case tag: PhaseNextifyTag => tag }.foreach(bt.removeTag(_))
+          bt.addTag(noRegisterModule)
+          bt.clockDomain = null
+          bt.unsetName()
+          bt.setName(s"${origName}_r")
+
+          // Rebuild connections
+          statements.foreach {
+            case s: DataAssignmentStatement =>
+              dSignal := s.source.asInstanceOf[dSignal.type]
+            case _ =>
+          }
+
+          ctx.restore()
+          if(config.verbose) {
+            SpinalInfo(s"Transformed register ${bt.getName()} to module ${regModule.getName()}")
+          }
+        }
+      } catch {
+        case e: Exception =>
+          PendingError(s"""Failed to process register ${bt.getName()}:
+            |Type: ${bt.getClass.getName}
+            |Error: ${e.getMessage}
+            |""".stripMargin)
+      }
+    }
   }
 }

@@ -829,6 +829,7 @@ object noLatchCheck                  extends SpinalTag
 object noBackendCombMerge            extends SpinalTag
 object crossClockDomain              extends SpinalTag{ override def moveToSyncNode = true }
 object crossClockBuffer              extends SpinalTag{ override def moveToSyncNode = true }
+object noRegisterModule              extends SpinalTag
 
 sealed trait TimingEndpointType
 object TimingEndpointType {

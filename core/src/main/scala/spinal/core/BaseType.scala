@@ -136,6 +136,15 @@ abstract class BaseType extends Data with DeclarationStatement with StatementDou
     compositAssignFrom(that,target,InitialAssign)
   }
 
+  def getInitValue: this.type = {
+    require(hasInit, "Can't get init value of register without initialization")
+    var initValue: this.type = null
+    foreachStatements(s => if (s.isInstanceOf[InitAssignmentStatement]) {
+      initValue = s.asInstanceOf[InitAssignmentStatement].source.asInstanceOf[this.type]
+    })
+    initValue
+  }
+
 
   /** Don't remove/simplify this data during rtl generation */
   private[core] var dontSimplify = false
